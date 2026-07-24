@@ -1,24 +1,42 @@
-import { createClient } from 'redis';
 import axios from 'axios';
 
-const redis = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
+let redis = null;
 
-redis.on('error', (err) => console.error('Redis error:', err));
-await redis.connect();
+async function getRedis() {
+  if (redis) return redis;
+  try {
+    const { createClient } = await import('redis');
+    redis = createClient({ url: process.env.REDIS_URL || 'redis://localhost:6379' });
+    redis.on('error', () => {});
+    await Promise.race([
+      redis.connect(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+    ]);
+    return redis;
+  } catch {
+    redis = null;
+    return null;
+  }
+}
 
 export async function getAQData(city) {
   const cacheKey = `aqi:${city.toLowerCase()}`;
+  const client = await getRedis();
 
-  // Check Redis first
-  const cached = await redis.get(cacheKey);
-  if (cached) {
-    console.log(`Cache HIT for ${city}`);
-    return { ...JSON.parse(cached), fromCache: true };
+  if (client) {
+    try {
+      const cached = await client.get(cacheKey);
+      if (cached) {
+        console.log(`Cache HIT for ${city}`);
+        return { ...JSON.parse(cached), fromCache: true };
+      }
+    } catch {
+      // ignore cache errors
+    }
   }
 
   console.log(`Cache MISS for ${city} — fetching from API`);
 
-  // Fetch from OpenAQ v3 API
   const response = await axios.get('https://api.openaq.org/v3/locations', {
     params: { city, limit: 5 },
     headers: {
@@ -33,8 +51,13 @@ export async function getAQData(city) {
     fromCache: false,
   };
 
-  // Store in Redis for 10 minutes
-  await redis.set(cacheKey, JSON.stringify(data), { EX: 600 });
+  if (client) {
+    try {
+      await client.set(cacheKey, JSON.stringify(data), { EX: 600 });
+    } catch {
+      // ignore cache errors
+    }
+  }
 
   return data;
 }
