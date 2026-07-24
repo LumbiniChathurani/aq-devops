@@ -10,7 +10,7 @@ async function getRedis() {
     redis.on('error', () => {});
     await Promise.race([
       redis.connect(),
-      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 2000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 500))
     ]);
     return redis;
   } catch {
